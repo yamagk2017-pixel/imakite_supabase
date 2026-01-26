@@ -1,0 +1,32 @@
+name: IHC Snapshot to Supabase
+
+on:
+  workflow_dispatch:
+    inputs:
+      snapshot_date:
+        description: 'Override snapshot date (YYYY-MM-DD)'
+        required: false
+        type: string
+  # schedule:
+  #   - cron: "0 14 * * *"  # 23:00 JST
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    env:
+      TZ: Asia/Tokyo
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install deps
+        run: pip install --upgrade supabase pandas requests
+      - name: Run snapshot job
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SPOTIFY_CLIENT_ID: ${{ secrets.SPOTIFY_CLIENT_ID }}
+          SPOTIFY_CLIENT_SECRET: ${{ secrets.SPOTIFY_CLIENT_SECRET }}
+          SNAPSHOT_DATE: ${{ inputs.snapshot_date }}
+        run: python scripts/ihc_snapshot_job.py
