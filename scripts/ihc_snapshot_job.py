@@ -135,7 +135,7 @@ def get_top_track_popularities(artist_id: str, token_manager: TokenManager, top_
     return [], []
 
 
-def count_recent_releases(tracks, days: int = 30) -> int:
+def count_recent_releases(tracks, days: int = 7) -> int:
     count = 0
     now = datetime.now().date()
     for track in tracks:
@@ -164,7 +164,7 @@ def fetch_snapshot(df_ids: pd.DataFrame, token_manager: TokenManager) -> pd.Data
         print(f"[{index + 1}/{total}] Fetching {spotify_id}...")
         info = get_artist_info(spotify_id, token_manager)
         tracks, pops = get_top_track_popularities(spotify_id, token_manager)
-        new_count = count_recent_releases(tracks, days=30)
+        new_count = count_recent_releases(tracks, days=7)
 
         snapshot.append(
             {
