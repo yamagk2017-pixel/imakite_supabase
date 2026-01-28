@@ -502,6 +502,8 @@ def main() -> None:
     merged = merged.sort_values(by="cumulative_score", ascending=False).reset_index(
         drop=True
     )
+    if "rank" in merged.columns:
+        merged = merged.drop(columns=["rank"])
     merged.insert(0, "rank", merged.index + 1)
 
     cumulative_records = []
