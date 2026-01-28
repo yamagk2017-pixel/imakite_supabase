@@ -1,4 +1,5 @@
 import base64
+import math
 import os
 import random
 import time
@@ -163,6 +164,8 @@ def fetch_group_names(supabase: Client, group_ids: list[str]) -> dict:
 
 
 def to_int(value):
+    if value is None or pd.isna(value):
+        return None
     try:
         return int(value)
     except (TypeError, ValueError):
@@ -170,10 +173,13 @@ def to_int(value):
 
 
 def to_float(value):
+    if value is None or pd.isna(value):
+        return None
     try:
-        return float(value)
+        casted = float(value)
     except (TypeError, ValueError):
         return None
+    return casted if math.isfinite(casted) else None
 
 
 def calculate_change_stats(today_val, yesterday_val):
@@ -229,7 +235,7 @@ def main() -> None:
     )
     df_diff["popularity_delta"] = df_now["artist_popularity"] - prev_popularity
     df_diff.loc[new_artist_ids, "popularity_delta"] = 0
-    df_diff["popularity_delta"].fillna(0, inplace=True)
+    df_diff["popularity_delta"] = df_diff["popularity_delta"].fillna(0)
 
     current_followers = df_now["followers"]
     prev_followers_series = df_prev.get("followers", pd.Series(dtype="float64")).reindex(
