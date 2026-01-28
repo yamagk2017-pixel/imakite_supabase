@@ -7,8 +7,8 @@ on:
         description: 'Override snapshot date (YYYY-MM-DD)'
         required: false
         type: string
-  # schedule:
-  #   - cron: "0 14 * * *"  # 23:00 JST
+   schedule:
+     - cron: "0 14 * * *"  # 23:00 JST
 
 jobs:
   run:
