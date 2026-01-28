@@ -275,10 +275,10 @@ def main() -> None:
     ].isna()
     df_diff.loc[condition_low_popularity, "score"] = 0
 
-    ranking = df_diff.sort_values(by="score", ascending=False).reset_index()
-    ranking.insert(0, "rank", ranking.index + 1)
+    ranking_raw = df_diff.sort_values(by="score", ascending=False).reset_index()
+    ranking_raw.insert(0, "rank", ranking_raw.index + 1)
 
-    ranking = ranking[
+    ranking_raw = ranking_raw[
         [
             "rank",
             "score",
@@ -295,6 +295,10 @@ def main() -> None:
         ]
     ]
 
+    # daily_rankings はポイント表記 (score * 10) を保存する
+    ranking_points = ranking_raw.copy()
+    ranking_points["score"] = ranking_points["score"] * 10
+
     response = (
         supabase.schema("ihc")
         .table("daily_rankings")
@@ -310,13 +314,15 @@ def main() -> None:
             columns={"rank": "prev_rank", "score": "score_prev"}
         )
 
-    ranking = ranking.merge(df_prev_score, how="left", left_on="group_id", right_index=True)
-    ranking["score_delta"] = ranking["score"] - ranking["score_prev"]
-    threshold = 5.0
-    ranking["rising_flag"] = ranking["score_delta"] > threshold
-    ranking["rising_icon"] = ranking["rising_flag"]
+    ranking_points = ranking_points.merge(
+        df_prev_score, how="left", left_on="group_id", right_index=True
+    )
+    ranking_points["score_delta"] = ranking_points["score"] - ranking_points["score_prev"]
+    threshold = 50.0
+    ranking_points["rising_flag"] = ranking_points["score_delta"] > threshold
+    ranking_points["rising_icon"] = ranking_points["rising_flag"]
 
-    ranking = ranking[
+    ranking_points = ranking_points[
         [
             "rank",
             "prev_rank",
@@ -338,7 +344,7 @@ def main() -> None:
     ]
 
     records = []
-    for _, row in ranking.iterrows():
+    for _, row in ranking_points.iterrows():
         records.append(
             {
                 "snapshot_date": snapshot_date,
@@ -349,6 +355,7 @@ def main() -> None:
                 "score_prev": to_float(row.get("score_prev")),
                 "score_delta": to_float(row.get("score_delta")),
                 "rising_icon": bool(row.get("rising_icon")),
+                "artist_name": row.get("name"),
                 "artist_popularity": to_int(row.get("artist_popularity")),
                 "popularity_delta": to_int(row.get("popularity_delta")),
                 "followers": to_int(row.get("followers")),
@@ -372,7 +379,7 @@ def main() -> None:
         )
         print(f"Upserted {start + len(batch)} / {len(records)}")
 
-    df_today_stats_source = ranking.copy()
+    df_today_stats_source = ranking_points.copy()
     df_today_stats_source["artist_popularity"] = pd.to_numeric(
         df_today_stats_source["artist_popularity"], errors="coerce"
     )
@@ -491,7 +498,7 @@ def main() -> None:
     if df_prev_cumulative.empty:
         df_prev_cumulative = pd.DataFrame(columns=["group_id", "cumulative_score"])
 
-    score_points = ranking.copy()
+    score_points = ranking_raw.copy()
     score_points["score_points"] = score_points["score"] * 10
 
     merged = score_points.merge(df_prev_cumulative, on="group_id", how="left")
@@ -533,7 +540,7 @@ def main() -> None:
     token_manager = TokenManager(
         require_env("SPOTIFY_CLIENT_ID"), require_env("SPOTIFY_CLIENT_SECRET")
     )
-    top20_df = ranking.head(20).copy()
+    top20_df = ranking_points.head(20).copy()
 
     extra_info = []
     for artist_id in top20_df["spotify_id"]:
@@ -561,7 +568,7 @@ def main() -> None:
                 "group_id": row["group_id"],
                 "rank": int(row["rank"]),
                 "artist_name": row["name"],
-                "score": float(row["score"] * 10),
+                "score": float(row["score"]),
                 "latest_track_name": row.get("latest_track_name"),
                 "latest_track_embed_link": row.get("latest_track_embed_link"),
                 "artist_image_url": row.get("artist_image_url"),
