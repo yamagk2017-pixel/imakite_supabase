@@ -1,6 +1,6 @@
 name: IHC Snapshot to Supabase
 
-on:
+"on":
   workflow_dispatch:
     inputs:
       snapshot_date:
