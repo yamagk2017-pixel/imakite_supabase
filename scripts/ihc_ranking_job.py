@@ -126,6 +126,18 @@ def get_latest_track_info(artist_id: str, token_manager: TokenManager):
     return "N/A", "N/A"
 
 
+def get_fallback_track_info(artist_id: str, token_manager: TokenManager):
+    url = f"https://api.spotify.com/v1/artists/{artist_id}/top-tracks?market=JP"
+    data = make_spotify_request(url, token_manager)
+    if data and data.get("tracks"):
+        track = data["tracks"][0]
+        track_name = track["name"]
+        track_id = track["id"]
+        embed_link = f"https://open.spotify.com/embed/track/{track_id}"
+        return track_name, embed_link
+    return "N/A", "N/A"
+
+
 def get_artist_image_url(artist_id: str, token_manager: TokenManager) -> str:
     url = f"https://api.spotify.com/v1/artists/{artist_id}"
     data = make_spotify_request(url, token_manager)
@@ -546,6 +558,8 @@ def main() -> None:
     for artist_id in top20_df["spotify_id"]:
         print(f"Fetching Spotify info for {artist_id}...")
         track_name, embed_link = get_latest_track_info(artist_id, token_manager)
+        if track_name == "N/A" or embed_link == "N/A":
+            track_name, embed_link = get_fallback_track_info(artist_id, token_manager)
         image_url = get_artist_image_url(artist_id, token_manager)
         extra_info.append(
             {
