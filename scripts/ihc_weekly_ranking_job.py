@@ -37,7 +37,8 @@ def parse_week_end_date() -> date:
     raw = os.getenv("WEEK_END_DATE")
     if raw:
         return datetime.fromisoformat(raw).date()
-    return datetime.now(ZoneInfo("Asia/Tokyo")).date()
+    # Default to yesterday (JST) so Tue 00:00 run aggregates Tue-Mon.
+    return (datetime.now(ZoneInfo("Asia/Tokyo")).date() - timedelta(days=1))
 
 
 def main() -> None:
