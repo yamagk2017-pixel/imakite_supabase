@@ -47,10 +47,10 @@ def main() -> None:
     week_start_date = week_end_date - timedelta(days=6)
     print(f"Weekly range: {week_start_date} - {week_end_date}")
 
-    # Pull cumulative rankings for the last 7 days
+    # Pull daily rankings for the last 7 days (score is already x10)
     response = (
         supabase.schema("ihc")
-        .table("cumulative_rankings")
+        .table("daily_rankings")
         .select("snapshot_date, group_id, score, artist_popularity")
         .gte("snapshot_date", week_start_date.isoformat())
         .lte("snapshot_date", week_end_date.isoformat())
