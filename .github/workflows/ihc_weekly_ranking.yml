@@ -1,0 +1,30 @@
+name: IHC Weekly Ranking to Supabase
+
+"on":
+  workflow_dispatch:
+    inputs:
+      week_end_date:
+        description: 'Week end date (YYYY-MM-DD). Default: today (JST)'
+        required: false
+        type: string
+  schedule:
+    - cron: "0 15 * * 1"  # 00:00 JST Tuesday
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    env:
+      TZ: Asia/Tokyo
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install deps
+        run: pip install --upgrade supabase pandas
+      - name: Run weekly ranking job
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          WEEK_END_DATE: ${{ inputs.week_end_date }}
+        run: python scripts/ihc_weekly_ranking_job.py
