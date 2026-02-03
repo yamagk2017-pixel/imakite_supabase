@@ -60,6 +60,14 @@ def main() -> None:
     if df.empty:
         raise ValueError("No cumulative_rankings data for the specified week.")
 
+    df["snapshot_date"] = pd.to_datetime(df["snapshot_date"]).dt.date
+    print(
+        "Fetched daily_rankings:",
+        f"rows={len(df)}",
+        f"min_date={df['snapshot_date'].min()}",
+        f"max_date={df['snapshot_date'].max()}",
+    )
+
     # Aggregate total score per artist (score is already x10)
     df["score"] = pd.to_numeric(df["score"], errors="coerce").fillna(0)
 
@@ -74,7 +82,6 @@ def main() -> None:
     totals = totals.rename(columns={"score": "total_score"})
 
     # Use latest day's artist_popularity within the week
-    df["snapshot_date"] = pd.to_datetime(df["snapshot_date"]).dt.date
     latest = (
         df.sort_values(by=["snapshot_date"])\
           .groupby("group_id", as_index=False)\
