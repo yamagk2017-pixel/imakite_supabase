@@ -48,15 +48,28 @@ def main() -> None:
     print(f"Weekly range: {week_start_date} - {week_end_date}")
 
     # Pull daily rankings for the last 7 days (score is already x10)
-    response = (
-        supabase.schema("ihc")
-        .table("daily_rankings")
-        .select("snapshot_date, group_id, score, artist_popularity")
-        .gte("snapshot_date", week_start_date.isoformat())
-        .lte("snapshot_date", week_end_date.isoformat())
-        .execute()
-    )
-    df = pd.json_normalize(response.data or [])
+    # Fetch all rows (PostgREST default limit is 1000)
+    page_size = int(os.getenv("PAGE_SIZE", "1000"))
+    offset = 0
+    rows = []
+    while True:
+        response = (
+            supabase.schema("ihc")
+            .table("daily_rankings")
+            .select("snapshot_date, group_id, score, artist_popularity")
+            .gte("snapshot_date", week_start_date.isoformat())
+            .lte("snapshot_date", week_end_date.isoformat())
+            .order("snapshot_date")
+            .order("group_id")
+            .range(offset, offset + page_size - 1)
+            .execute()
+        )
+        batch = response.data or []
+        rows.extend(batch)
+        if len(batch) < page_size:
+            break
+        offset += page_size
+    df = pd.json_normalize(rows)
     if df.empty:
         raise ValueError("No cumulative_rankings data for the specified week.")
 
