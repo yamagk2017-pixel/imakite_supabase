@@ -49,7 +49,7 @@ def week_label(week_end: date) -> str:
     return f"({week_start.year}/{week_start.month}/{week_start.day}-{week_end.year}/{week_end.month}/{week_end.day})"
 
 
-def get_spotify_access_token() -> str:
+def get_spotify_access_token() -> tuple[str, str | None]:
     client_id = require_env("SPOTIFY_CLIENT_ID")
     client_secret = require_env("SPOTIFY_CLIENT_SECRET")
     refresh_token = require_env("SPOTIFY_REFRESH_TOKEN")
@@ -65,10 +65,12 @@ def get_spotify_access_token() -> str:
         print("status:", response.status_code)
         print("response:", response.text)
         response.raise_for_status()
-    token = response.json().get("access_token")
+    payload = response.json()
+    token = payload.get("access_token")
     if not token:
         raise ValueError("No access_token returned from Spotify.")
-    return token
+    new_refresh = payload.get("refresh_token")
+    return token, new_refresh
 
 
 def spotify_get(url: str, access_token: str, params: dict | None = None) -> dict:
@@ -193,7 +195,7 @@ def main() -> None:
     if not artist_ids:
         raise ValueError("No spotify artist ids found for weekly top20.")
 
-    access_token = get_spotify_access_token()
+    access_token, new_refresh = get_spotify_access_token()
     user_id = require_env("SPOTIFY_USER_ID")
 
     track_uris = []
@@ -212,6 +214,12 @@ def main() -> None:
     new_name = f"{PLAYLIST_BASE_NAME} {label}"
     update_playlist(access_token, playlist_id, new_name, f"イマキテランキング集計期間：{label}")
     print(f"✅ プレイリスト作成・更新完了: https://open.spotify.com/playlist/{playlist_id}")
+
+    refresh_file = os.getenv("SPOTIFY_REFRESH_TOKEN_FILE")
+    if new_refresh and refresh_file:
+        with open(refresh_file, "w") as f:
+            f.write(new_refresh)
+        print("Updated refresh token written for secret sync.")
 
 
 if __name__ == "__main__":
