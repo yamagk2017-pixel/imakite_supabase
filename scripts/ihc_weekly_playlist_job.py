@@ -60,7 +60,11 @@ def get_spotify_access_token() -> str:
         "client_secret": client_secret,
     }
     response = requests.post("https://accounts.spotify.com/api/token", data=data, timeout=30)
-    response.raise_for_status()
+    if response.status_code >= 400:
+        print("❌ Spotify token refresh failed.")
+        print("status:", response.status_code)
+        print("response:", response.text)
+        response.raise_for_status()
     token = response.json().get("access_token")
     if not token:
         raise ValueError("No access_token returned from Spotify.")
