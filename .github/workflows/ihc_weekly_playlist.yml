@@ -1,0 +1,35 @@
+name: IHC Weekly Playlist to Spotify
+
+"on":
+  workflow_dispatch:
+    inputs:
+      week_end_date:
+        description: "Week end date (YYYY-MM-DD). Default: latest weekly_rankings"
+        required: false
+        type: string
+  workflow_run:
+    workflows: ["IHC Weekly Ranking to Supabase"]
+    types:
+      - completed
+
+jobs:
+  run:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install deps
+        run: pip install --upgrade supabase requests
+      - name: Run weekly playlist job
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          WEEK_END_DATE: ${{ inputs.week_end_date }}
+          SPOTIFY_CLIENT_ID: ${{ secrets.SPOTIFY_CLIENT_ID }}
+          SPOTIFY_CLIENT_SECRET: ${{ secrets.SPOTIFY_CLIENT_SECRET }}
+          SPOTIFY_REFRESH_TOKEN: ${{ secrets.SPOTIFY_REFRESH_TOKEN }}
+          SPOTIFY_USER_ID: ${{ secrets.SPOTIFY_USER_ID }}
+        run: python scripts/ihc_weekly_playlist_job.py
