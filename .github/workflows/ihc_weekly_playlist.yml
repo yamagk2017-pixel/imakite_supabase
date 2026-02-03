@@ -35,7 +35,7 @@ jobs:
           SPOTIFY_REFRESH_TOKEN_FILE: refresh_token.txt
         run: python scripts/ihc_weekly_playlist_job.py
       - name: Update refresh token secret
-        if: ${{ hashFiles('refresh_token.txt') != '' && secrets.GH_PAT != '' }}
+        if: ${{ hashFiles('refresh_token.txt') != '' }}
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
         run: |
@@ -49,6 +49,10 @@ jobs:
           token = os.environ["GH_PAT"]
           secret_name = "SPOTIFY_REFRESH_TOKEN"
           refresh_path = "refresh_token.txt"
+          
+          if not token:
+              print("GH_PAT is missing. Skipping secret update.")
+              raise SystemExit(0)
           
           with open(refresh_path, "r") as f:
               refresh_token = f.read().strip()
