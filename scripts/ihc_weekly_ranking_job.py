@@ -62,6 +62,14 @@ def main() -> None:
 
     # Aggregate total score per artist (score is already x10)
     df["score"] = pd.to_numeric(df["score"], errors="coerce").fillna(0)
+
+    debug_group_id = os.getenv("WEEKLY_DEBUG_GROUP_ID")
+    if debug_group_id:
+        debug_rows = df[df["group_id"] == debug_group_id][["snapshot_date", "score"]]
+        print("Debug group rows:")
+        print(debug_rows.to_string(index=False))
+        print(f"Debug group sum: {debug_rows['score'].sum()}")
+
     totals = df.groupby("group_id", as_index=False)["score"].sum()
     totals = totals.rename(columns={"score": "total_score"})
 
