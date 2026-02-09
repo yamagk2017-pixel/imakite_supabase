@@ -8,7 +8,7 @@ name: IHC Snapshot to Supabase
         required: false
         type: string
   schedule:
-    - cron: "0 14 * * *"  # 23:00 JST
+    - cron: "30 14 * * *"  # 23:30 JST
 
 jobs:
   run:
