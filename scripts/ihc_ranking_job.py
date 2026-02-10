@@ -218,7 +218,11 @@ def main() -> None:
 
     snapshot_date = os.getenv("SNAPSHOT_DATE")
     if not snapshot_date:
-        snapshot_date = datetime.now(ZoneInfo("Asia/Tokyo")).strftime("%Y-%m-%d")
+        # Default to yesterday (JST) so workflow chains remain aligned
+        # even when execution is delayed past midnight.
+        snapshot_date = (
+            datetime.now(ZoneInfo("Asia/Tokyo")) - timedelta(days=1)
+        ).strftime("%Y-%m-%d")
     prev_date = (datetime.fromisoformat(snapshot_date) - timedelta(days=1)).strftime(
         "%Y-%m-%d"
     )
