@@ -159,6 +159,21 @@ def fetch_snapshot(supabase: Client, date_str: str) -> pd.DataFrame:
     return pd.json_normalize(response.data or [])
 
 
+def get_latest_snapshot_date(supabase: Client) -> str:
+    response = (
+        supabase.schema("ihc")
+        .table("artist_snapshots")
+        .select("snapshot_date")
+        .order("snapshot_date", desc=True)
+        .limit(1)
+        .execute()
+    )
+    rows = response.data or []
+    if not rows:
+        raise ValueError("No snapshot data found in ihc.artist_snapshots")
+    return rows[0]["snapshot_date"]
+
+
 def fetch_group_names(supabase: Client, group_ids: list[str]) -> dict:
     if not group_ids:
         return {}
@@ -218,11 +233,9 @@ def main() -> None:
 
     snapshot_date = os.getenv("SNAPSHOT_DATE")
     if not snapshot_date:
-        # Default to yesterday (JST) so workflow chains remain aligned
-        # even when execution is delayed past midnight.
-        snapshot_date = (
-            datetime.now(ZoneInfo("Asia/Tokyo")) - timedelta(days=1)
-        ).strftime("%Y-%m-%d")
+        # Use the latest available snapshot so workflow timing delay does not
+        # cause date mismatches between snapshot and ranking jobs.
+        snapshot_date = get_latest_snapshot_date(supabase)
     prev_date = (datetime.fromisoformat(snapshot_date) - timedelta(days=1)).strftime(
         "%Y-%m-%d"
     )
