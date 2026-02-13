@@ -135,6 +135,19 @@ def get_top_track_popularities(artist_id: str, token_manager: TokenManager, top_
     return [], []
 
 
+def get_artist_image_url_from_info(info: dict | None) -> str | None:
+    if not info:
+        return None
+    images = info.get("images", [])
+    if isinstance(images, list) and images:
+        first = images[0]
+        if isinstance(first, dict):
+            url = first.get("url")
+            if isinstance(url, str) and url:
+                return url
+    return None
+
+
 def count_recent_releases(tracks, days: int = 7) -> int:
     count = 0
     now = datetime.now().date()
@@ -170,6 +183,7 @@ def fetch_snapshot(df_ids: pd.DataFrame, token_manager: TokenManager) -> pd.Data
             {
                 "spotify_id": spotify_id,
                 "name": info.get("name", "N/A") if info else "N/A",
+                "artist_image_url": get_artist_image_url_from_info(info),
                 "artist_popularity": info.get("popularity", 0) if info else 0,
                 "followers": info.get("followers", {}).get("total", 0) if info else 0,
                 "track_popularity_sum": sum(pops) if pops else 0,
@@ -231,6 +245,48 @@ def upsert_snapshots(
         print(f"Upserted {start + len(batch)} / {len(records)}")
 
 
+def update_group_images(
+    supabase: Client,
+    df_snapshot: pd.DataFrame,
+    df_ids: pd.DataFrame,
+    batch_size: int,
+) -> None:
+    df_image = df_snapshot[["spotify_id", "artist_image_url"]].merge(
+        df_ids, on="spotify_id", how="left"
+    )
+    df_image = df_image.dropna(subset=["group_id"])
+    df_image = df_image.drop_duplicates(subset=["group_id"], keep="last")
+
+    image_rows = []
+    for _, row in df_image.iterrows():
+        image_rows.append(
+            {
+                "group_id": row["group_id"],
+                "artist_image_url": row.get("artist_image_url"),
+            }
+        )
+
+    if not image_rows:
+        print("No group image rows to update.")
+        return
+
+    updated = 0
+    now_iso = datetime.now(ZoneInfo("Asia/Tokyo")).isoformat()
+    for start in range(0, len(image_rows), batch_size):
+        batch = image_rows[start : start + batch_size]
+        for row in batch:
+            payload = {
+                "artist_image_url": row["artist_image_url"],
+                "artist_image_source": "spotify",
+                "artist_image_updated_at": now_iso,
+            }
+            supabase.schema("imd").table("groups").update(payload).eq(
+                "id", row["group_id"]
+            ).execute()
+            updated += 1
+        print(f"Updated group images {updated} / {len(image_rows)}")
+
+
 def main() -> None:
     supabase = get_supabase_client()
     df_ids = fetch_spotify_ids(supabase)
@@ -267,6 +323,7 @@ def main() -> None:
     batch_size = int(os.getenv("BATCH_SIZE", "500"))
     print(f"Snapshot date: {snapshot_date}")
     upsert_snapshots(supabase, df_snapshot, df_ids, snapshot_date, batch_size)
+    update_group_images(supabase, df_snapshot, df_ids, batch_size)
 
 
 if __name__ == "__main__":
