@@ -9,6 +9,11 @@ PLAYLIST_BASE_NAME = "イマキテ週間ランキングTOP20"
 SPOTIFY_MARKET = "JP"
 
 
+def is_dry_run() -> bool:
+    value = os.getenv("DRY_RUN", "").strip().lower()
+    return value in {"1", "true", "yes", "on"}
+
+
 def require_env(name: str) -> str:
     value = os.getenv(name)
     if not value:
@@ -158,10 +163,35 @@ def update_playlist(access_token: str, playlist_id: str, new_name: str, descript
     requests.put(url, headers=headers, json={"name": new_name, "description": description}, timeout=30).raise_for_status()
 
 
+def upsert_weekly_playlist(
+    supabase: Client,
+    week_end: date,
+    playlist_id: str,
+) -> None:
+    playlist_url = f"https://open.spotify.com/playlist/{playlist_id}"
+    embed_url = f"https://open.spotify.com/embed/playlist/{playlist_id}"
+    row = {
+        "week_end_date": week_end.isoformat(),
+        "spotify_playlist_id": playlist_id,
+        "spotify_playlist_url": playlist_url,
+        "spotify_embed_url": embed_url,
+    }
+    (
+        supabase.schema("ihc")
+        .table("weekly_playlists")
+        .upsert([row], on_conflict="week_end_date")
+        .execute()
+    )
+    print(
+        f"weekly_playlists upserted: week_end_date={row['week_end_date']}, playlist_id={playlist_id}"
+    )
+
+
 def main() -> None:
     supabase = get_supabase_client()
     week_end = parse_week_end_date(supabase)
     label = week_label(week_end)
+    dry_run = is_dry_run()
 
     # Fetch top 20 group_ids
     resp = (
@@ -195,6 +225,12 @@ def main() -> None:
     if not artist_ids:
         raise ValueError("No spotify artist ids found for weekly top20.")
 
+    if dry_run:
+        print(
+            f"DRY_RUN enabled. Skipping playlist update/upsert for week_end_date={week_end.isoformat()}"
+        )
+        return
+
     access_token, new_refresh = get_spotify_access_token()
     user_id = require_env("SPOTIFY_USER_ID")
 
@@ -213,7 +249,10 @@ def main() -> None:
     replace_playlist_tracks(access_token, playlist_id, track_uris)
     new_name = f"{PLAYLIST_BASE_NAME} {label}"
     update_playlist(access_token, playlist_id, new_name, f"イマキテランキング集計期間：{label}")
-    print(f"✅ プレイリスト作成・更新完了: https://open.spotify.com/playlist/{playlist_id}")
+    print(
+        f"✅ プレイリスト作成・更新完了: week_end_date={week_end.isoformat()}, playlist_id={playlist_id}, url=https://open.spotify.com/playlist/{playlist_id}"
+    )
+    upsert_weekly_playlist(supabase, week_end, playlist_id)
 
     refresh_file = os.getenv("SPOTIFY_REFRESH_TOKEN_FILE")
     if new_refresh and refresh_file:
