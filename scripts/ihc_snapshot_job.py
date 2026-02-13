@@ -200,6 +200,15 @@ def to_int(value) -> int:
         return 0
 
 
+def to_nullable_text(value) -> str | None:
+    if value is None:
+        return None
+    if pd.isna(value):
+        return None
+    text = str(value).strip()
+    return text if text else None
+
+
 def upsert_snapshots(
     supabase: Client,
     df_snapshot: pd.DataFrame,
@@ -262,7 +271,7 @@ def update_group_images(
         image_rows.append(
             {
                 "group_id": row["group_id"],
-                "artist_image_url": row.get("artist_image_url"),
+                "artist_image_url": to_nullable_text(row.get("artist_image_url")),
             }
         )
 
