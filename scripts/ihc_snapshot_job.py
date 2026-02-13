@@ -268,9 +268,12 @@ def update_group_images(
 
     image_rows = []
     for _, row in df_image.iterrows():
+        group_id = to_nullable_text(row.get("group_id"))
+        if not group_id:
+            continue
         image_rows.append(
             {
-                "group_id": row["group_id"],
+                "group_id": group_id,
                 "artist_image_url": to_nullable_text(row.get("artist_image_url")),
             }
         )
@@ -285,12 +288,12 @@ def update_group_images(
         batch = image_rows[start : start + batch_size]
         for row in batch:
             payload = {
-                "artist_image_url": row["artist_image_url"],
+                "artist_image_url": to_nullable_text(row["artist_image_url"]),
                 "artist_image_source": "spotify",
-                "artist_image_updated_at": now_iso,
+                "artist_image_updated_at": to_nullable_text(now_iso),
             }
             supabase.schema("imd").table("groups").update(payload).eq(
-                "id", row["group_id"]
+                "id", to_nullable_text(row["group_id"])
             ).execute()
             updated += 1
         print(f"Updated group images {updated} / {len(image_rows)}")
