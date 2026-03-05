@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 import requests
+from postgrest.exceptions import APIError
 from supabase import Client, create_client
 
 
@@ -209,6 +210,60 @@ def to_nullable_text(value) -> str | None:
     return text if text else None
 
 
+def is_retryable_supabase_error(exc: Exception) -> bool:
+    text = str(exc).lower()
+    retry_keywords = [
+        " 429",
+        " 500",
+        " 502",
+        " 503",
+        " 504",
+        "bad gateway",
+        "gateway timeout",
+        "timed out",
+        "temporarily unavailable",
+        "json could not be generated",
+    ]
+    return any(keyword in text for keyword in retry_keywords)
+
+
+def execute_supabase_with_retry(
+    operation_name: str,
+    request_builder_factory,
+    max_retries: int = 5,
+) -> bool:
+    for attempt in range(max_retries):
+        try:
+            request_builder_factory().execute()
+            return True
+        except APIError as exc:
+            can_retry = is_retryable_supabase_error(exc) and attempt < max_retries - 1
+            if not can_retry:
+                print(f"{operation_name} failed: {exc}")
+                return False
+
+            wait_time = (2**attempt) + random.uniform(0, 1)
+            print(
+                f"{operation_name} got retryable API error. "
+                f"Retry {attempt + 1}/{max_retries - 1} after {wait_time:.2f}s..."
+            )
+            time.sleep(wait_time)
+        except Exception as exc:
+            can_retry = attempt < max_retries - 1
+            if not can_retry:
+                print(f"{operation_name} failed: {exc}")
+                return False
+
+            wait_time = (2**attempt) + random.uniform(0, 1)
+            print(
+                f"{operation_name} got unexpected error. "
+                f"Retry {attempt + 1}/{max_retries - 1} after {wait_time:.2f}s..."
+            )
+            time.sleep(wait_time)
+
+    return False
+
+
 def upsert_snapshots(
     supabase: Client,
     df_snapshot: pd.DataFrame,
@@ -247,10 +302,17 @@ def upsert_snapshots(
 
     for start in range(0, len(records), batch_size):
         batch = records[start : start + batch_size]
-        supabase.schema("ihc").table("artist_snapshots").upsert(
-            batch,
-            on_conflict="snapshot_date,group_id",
-        ).execute()
+        ok = execute_supabase_with_retry(
+            operation_name=f"Upsert artist_snapshots batch {start + 1}-{start + len(batch)}",
+            request_builder_factory=lambda: supabase.schema("ihc")
+            .table("artist_snapshots")
+            .upsert(
+                batch,
+                on_conflict="snapshot_date,group_id",
+            ),
+        )
+        if not ok:
+            raise Exception("Failed to upsert artist snapshots after retries.")
         print(f"Upserted {start + len(batch)} / {len(records)}")
 
 
@@ -283,6 +345,7 @@ def update_group_images(
         return
 
     updated = 0
+    failed = 0
     now_iso = datetime.now(ZoneInfo("Asia/Tokyo")).isoformat()
     for start in range(0, len(image_rows), batch_size):
         batch = image_rows[start : start + batch_size]
@@ -292,11 +355,31 @@ def update_group_images(
                 "artist_image_source": "spotify",
                 "artist_image_updated_at": to_nullable_text(now_iso),
             }
-            supabase.schema("imd").table("groups").update(payload).eq(
-                "id", to_nullable_text(row["group_id"])
-            ).execute()
-            updated += 1
-        print(f"Updated group images {updated} / {len(image_rows)}")
+            group_id = to_nullable_text(row["group_id"])
+            if not group_id:
+                failed += 1
+                continue
+            ok = execute_supabase_with_retry(
+                operation_name=f"Update group image group_id={group_id}",
+                request_builder_factory=lambda: supabase.schema("imd")
+                .table("groups")
+                .update(payload)
+                .eq("id", group_id),
+            )
+            if ok:
+                updated += 1
+            else:
+                failed += 1
+        print(
+            f"Updated group images {updated} / {len(image_rows)} "
+            f"(failed: {failed})"
+        )
+
+    if failed > 0:
+        print(
+            f"Warning: failed to update {failed} group image rows after retries. "
+            "Snapshot upsert has completed."
+        )
 
 
 def main() -> None:
