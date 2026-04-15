@@ -382,7 +382,31 @@ def update_group_images(
         )
 
 
+def resolve_snapshot_date() -> str:
+    snapshot_date = os.getenv("SNAPSHOT_DATE")
+    if snapshot_date:
+        return snapshot_date
+
+    cutoff_raw = os.getenv("SNAPSHOT_DATE_CUTOFF_HOUR", "3")
+    try:
+        cutoff_hour = int(cutoff_raw)
+    except ValueError as exc:
+        raise ValueError("SNAPSHOT_DATE_CUTOFF_HOUR must be an integer.") from exc
+    if cutoff_hour < 0 or cutoff_hour > 23:
+        raise ValueError("SNAPSHOT_DATE_CUTOFF_HOUR must be between 0 and 23.")
+
+    now_jst = datetime.now(ZoneInfo("Asia/Tokyo"))
+    business_date = now_jst.date() - timedelta(days=1) if now_jst.hour < cutoff_hour else now_jst.date()
+    print(
+        "SNAPSHOT_DATE not provided. "
+        f"Using business-date rule: now_jst={now_jst.isoformat()}, "
+        f"cutoff_hour={cutoff_hour}, snapshot_date={business_date.isoformat()}"
+    )
+    return business_date.isoformat()
+
+
 def main() -> None:
+    snapshot_date = resolve_snapshot_date()
     supabase = get_supabase_client()
     df_ids = fetch_spotify_ids(supabase)
 
@@ -410,10 +434,6 @@ def main() -> None:
         df_snapshot = df_snapshot.reset_index()
 
     df_snapshot = df_snapshot.drop_duplicates(subset="spotify_id", keep="last")
-
-    snapshot_date = os.getenv("SNAPSHOT_DATE")
-    if not snapshot_date:
-        snapshot_date = datetime.now(ZoneInfo("Asia/Tokyo")).strftime("%Y-%m-%d")
 
     batch_size = int(os.getenv("BATCH_SIZE", "500"))
     print(f"Snapshot date: {snapshot_date}")
