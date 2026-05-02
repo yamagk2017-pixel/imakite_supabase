@@ -177,16 +177,43 @@ def get_latest_snapshot_date(supabase: Client) -> str:
 def fetch_group_names(supabase: Client, group_ids: list[str]) -> dict:
     if not group_ids:
         return {}
-    response = (
-        supabase.schema("imd")
-        .table("groups")
-        .select("id, name_ja")
-        .in_("id", group_ids)
-        .execute()
+
+    unique_group_ids = list(dict.fromkeys(group_ids))
+    chunk_size_raw = os.getenv("GROUP_NAMES_CHUNK_SIZE", "50")
+    try:
+        chunk_size = int(chunk_size_raw)
+    except ValueError as exc:
+        raise ValueError("GROUP_NAMES_CHUNK_SIZE must be an integer.") from exc
+    if chunk_size <= 0:
+        raise ValueError("GROUP_NAMES_CHUNK_SIZE must be greater than 0.")
+
+    total_chunks = math.ceil(len(unique_group_ids) / chunk_size)
+    print(
+        f"Resolving group names: ids={len(unique_group_ids)} chunk_size={chunk_size} chunks={total_chunks}"
     )
-    df_names = pd.json_normalize(response.data or [])
+
+    all_rows = []
+    for index in range(total_chunks):
+        start = index * chunk_size
+        end = start + chunk_size
+        id_chunk = unique_group_ids[start:end]
+        response = (
+            supabase.schema("imd")
+            .table("groups")
+            .select("id, name_ja")
+            .in_("id", id_chunk)
+            .execute()
+        )
+        batch_rows = response.data or []
+        all_rows.extend(batch_rows)
+        print(
+            f"Fetched group names chunk {index + 1}/{total_chunks}: requested={len(id_chunk)} returned={len(batch_rows)}"
+        )
+
+    df_names = pd.json_normalize(all_rows)
     if df_names.empty:
         return {}
+    df_names = df_names.drop_duplicates(subset=["id"])
     return dict(zip(df_names["id"], df_names["name_ja"]))
 
 

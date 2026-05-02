@@ -33,4 +33,5 @@ jobs:
           SPOTIFY_CLIENT_ID: ${{ secrets.SPOTIFY_CLIENT_ID }}
           SPOTIFY_CLIENT_SECRET: ${{ secrets.SPOTIFY_CLIENT_SECRET }}
           SNAPSHOT_DATE: ${{ inputs.snapshot_date }}
+          GROUP_NAMES_CHUNK_SIZE: "50"
         run: python scripts/ihc_ranking_job.py
