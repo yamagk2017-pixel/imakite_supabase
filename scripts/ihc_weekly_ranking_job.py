@@ -1,4 +1,5 @@
 import os
+import math
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -41,6 +42,45 @@ def parse_week_end_date() -> date:
     return (datetime.now(ZoneInfo("Asia/Tokyo")).date() - timedelta(days=1))
 
 
+def fetch_group_names(supabase: Client, group_ids: list[str]) -> dict[str, str]:
+    if not group_ids:
+        return {}
+
+    unique_group_ids = list(dict.fromkeys(group_ids))
+    chunk_size = int(os.getenv("GROUP_NAMES_CHUNK_SIZE", "200"))
+    if chunk_size <= 0:
+        raise ValueError("GROUP_NAMES_CHUNK_SIZE must be greater than 0.")
+
+    total_chunks = math.ceil(len(unique_group_ids) / chunk_size)
+    print(
+        f"Resolving group names: ids={len(unique_group_ids)} chunk_size={chunk_size} chunks={total_chunks}"
+    )
+
+    rows = []
+    for index in range(total_chunks):
+        start = index * chunk_size
+        end = start + chunk_size
+        id_chunk = unique_group_ids[start:end]
+        resp_names = (
+            supabase.schema("imd")
+            .table("groups")
+            .select("id, name_ja")
+            .in_("id", id_chunk)
+            .execute()
+        )
+        batch = resp_names.data or []
+        rows.extend(batch)
+        print(
+            f"Fetched group names chunk {index + 1}/{total_chunks}: requested={len(id_chunk)} returned={len(batch)}"
+        )
+
+    df_names = pd.json_normalize(rows)
+    if df_names.empty:
+        return {}
+    df_names = df_names.drop_duplicates(subset=["id"])
+    return dict(zip(df_names["id"], df_names["name_ja"]))
+
+
 def main() -> None:
     supabase = get_supabase_client()
 
@@ -72,7 +112,7 @@ def main() -> None:
         offset += page_size
     df = pd.json_normalize(rows)
     if df.empty:
-        raise ValueError("No cumulative_rankings data for the specified week.")
+        raise ValueError("No daily_rankings data for the specified week.")
 
     df["snapshot_date"] = pd.to_datetime(df["snapshot_date"]).dt.date
     print(
@@ -97,18 +137,7 @@ def main() -> None:
 
     # Attach name_ja
     group_ids = totals["group_id"].dropna().unique().tolist()
-    name_map = {}
-    if group_ids:
-        resp_names = (
-            supabase.schema("imd")
-            .table("groups")
-            .select("id, name_ja")
-            .in_("id", group_ids)
-            .execute()
-        )
-        df_names = pd.json_normalize(resp_names.data or [])
-        if not df_names.empty:
-            name_map = dict(zip(df_names["id"], df_names["name_ja"]))
+    name_map = fetch_group_names(supabase, group_ids)
 
     ranking = totals.merge(latest, on="group_id", how="left")
     ranking["artist_name"] = ranking["group_id"].map(name_map)

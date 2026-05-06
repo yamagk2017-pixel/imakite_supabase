@@ -4,7 +4,7 @@ name: IHC Weekly Ranking to Supabase
   workflow_dispatch:
     inputs:
       week_end_date:
-        description: 'Week end date (YYYY-MM-DD). Default: today (JST)'
+        description: 'Week end date (YYYY-MM-DD). Default: yesterday (JST)'
         required: false
         type: string
   schedule:
@@ -28,4 +28,5 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           WEEK_END_DATE: ${{ inputs.week_end_date }}
+          GROUP_NAMES_CHUNK_SIZE: "200"
         run: python scripts/ihc_weekly_ranking_job.py
