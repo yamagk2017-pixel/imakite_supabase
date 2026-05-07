@@ -7,6 +7,11 @@ on:
         description: 'Override snapshot date (YYYY-MM-DD)'
         required: false
         type: string
+      reset_daily_top20:
+        description: 'Reset daily_top20 rows for snapshot_date before save'
+        required: false
+        default: true
+        type: boolean
   workflow_run:
     workflows: ["IHC Snapshot to Supabase"]
     types:
@@ -33,5 +38,6 @@ jobs:
           SPOTIFY_CLIENT_ID: ${{ secrets.SPOTIFY_CLIENT_ID }}
           SPOTIFY_CLIENT_SECRET: ${{ secrets.SPOTIFY_CLIENT_SECRET }}
           SNAPSHOT_DATE: ${{ inputs.snapshot_date }}
+          RESET_DAILY_TOP20: ${{ inputs.reset_daily_top20 }}
           GROUP_NAMES_CHUNK_SIZE: "50"
         run: python scripts/ihc_ranking_job.py

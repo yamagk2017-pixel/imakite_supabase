@@ -236,6 +236,13 @@ def to_float(value):
     return casted if math.isfinite(casted) else None
 
 
+def parse_bool_env(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
 def calculate_change_stats(today_val, yesterday_val):
     diff, ratio_str = pd.NA, "N/A"
     if pd.notna(today_val) and pd.notna(yesterday_val):
@@ -632,6 +639,16 @@ def main() -> None:
                 "artist_image_url": row.get("artist_image_url"),
             }
         )
+
+    if parse_bool_env("RESET_DAILY_TOP20"):
+        (
+            supabase.schema("ihc")
+            .table("daily_top20")
+            .delete()
+            .eq("snapshot_date", snapshot_date)
+            .execute()
+        )
+        print(f"Reset daily_top20 rows for snapshot_date={snapshot_date}")
 
     (
         supabase.schema("ihc")
