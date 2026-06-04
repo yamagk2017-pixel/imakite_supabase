@@ -280,6 +280,11 @@ def main() -> None:
         raise ValueError(f"No snapshot data for {snapshot_date}")
 
     df_prev = fetch_snapshot(supabase, prev_date)
+    if df_prev.empty and not parse_bool_env("ALLOW_MISSING_PREV_SNAPSHOT"):
+        raise ValueError(
+            f"No previous snapshot data for {prev_date}. "
+            "Refusing to save rankings because every artist would be treated as new."
+        )
 
     group_ids = df_now["group_id"].dropna().unique().tolist()
     name_map = fetch_group_names(supabase, group_ids)

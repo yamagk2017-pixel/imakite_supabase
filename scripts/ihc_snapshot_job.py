@@ -387,7 +387,7 @@ def resolve_snapshot_date() -> str:
     if snapshot_date:
         return snapshot_date
 
-    cutoff_raw = os.getenv("SNAPSHOT_DATE_CUTOFF_HOUR", "3")
+    cutoff_raw = os.getenv("SNAPSHOT_DATE_CUTOFF_HOUR", "9")
     try:
         cutoff_hour = int(cutoff_raw)
     except ValueError as exc:
