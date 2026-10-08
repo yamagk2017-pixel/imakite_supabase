@@ -294,15 +294,22 @@ def main() -> None:
     if not df_prev.empty:
         df_prev = df_prev.set_index("group_id")
 
+    from ihc_identity import find_baseline_reset_group_ids
+
     df_diff = df_now.copy()
-    new_artist_ids = df_now.index.difference(df_prev.index)
+    baseline_reset_group_ids = find_baseline_reset_group_ids(df_now, df_prev)
+    if len(baseline_reset_group_ids) > 0:
+        print(
+            "Resetting day-over-day baselines for new or Spotify-ID-changed groups:",
+            len(baseline_reset_group_ids),
+        )
     df_diff["name"] = df_now["name"]
 
     prev_popularity = df_prev.get("artist_popularity", pd.Series(dtype="float64")).reindex(
         df_now.index
     )
     df_diff["popularity_delta"] = df_now["artist_popularity"] - prev_popularity
-    df_diff.loc[new_artist_ids, "popularity_delta"] = 0
+    df_diff.loc[baseline_reset_group_ids, "popularity_delta"] = 0
     df_diff["popularity_delta"] = df_diff["popularity_delta"].fillna(0)
 
     current_followers = df_now["followers"]
@@ -312,7 +319,7 @@ def main() -> None:
     prev_followers_filled = prev_followers_series.fillna(0)
     denominator_followers = prev_followers_filled.replace(0, 1)
     df_diff["followers_ratio"] = (current_followers - prev_followers_filled) / denominator_followers
-    df_diff.loc[new_artist_ids, "followers_ratio"] = 0.0
+    df_diff.loc[baseline_reset_group_ids, "followers_ratio"] = 0.0
 
     current_track_pop_sum = df_now["track_popularity_sum"]
     prev_track_pop_sum_series = df_prev.get(
@@ -323,10 +330,10 @@ def main() -> None:
     df_diff["track_popularity_sum_ratio"] = (
         current_track_pop_sum - prev_track_pop_sum_filled
     ) / denominator_track_pop_sum
-    df_diff.loc[new_artist_ids, "track_popularity_sum_ratio"] = 0.0
+    df_diff.loc[baseline_reset_group_ids, "track_popularity_sum_ratio"] = 0.0
 
     df_diff["new_release_count"] = df_now["new_release_count"]
-    df_diff.loc[new_artist_ids, "new_release_count"] = 0
+    df_diff.loc[baseline_reset_group_ids, "new_release_count"] = 0
 
     df_diff["score"] = (
         df_diff["popularity_delta"] * 3.0
