@@ -7,10 +7,8 @@ name: IHC Weekly Playlist to Spotify
         description: "Week end date (YYYY-MM-DD). Default: latest weekly_rankings"
         required: false
         type: string
-  workflow_run:
-    workflows: ["IHC Weekly Ranking to Supabase"]
-    types:
-      - completed
+  # Legacy TOP20 publishing is paused together with the weekly ranking.
+  # Keep manual execution and the implementation for a possible restart.
 
 jobs:
   run:

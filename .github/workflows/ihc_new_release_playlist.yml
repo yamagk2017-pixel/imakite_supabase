@@ -1,0 +1,85 @@
+name: IHC New Release Playlist
+
+"on":
+  schedule:
+    - cron: "0 15 * * 5" # Saturday 00:00 Asia/Tokyo; aggregation window Sat-Fri
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "weekly or the pinned approved bootstrap"
+        required: true
+        default: weekly
+        type: choice
+        options: [weekly, bootstrap]
+      cutoff:
+        description: "Weekly cutoff (Saturday YYYY-MM-DD); empty uses most recent Saturday JST"
+        required: false
+        type: string
+      apply:
+        description: "Publish to Spotify and record dedicated history"
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ihc-imakite-idol-japan-publisher
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: ${{ github.event_name == 'workflow_dispatch' || vars.IHC_NEW_RELEASE_PLAYLIST_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      TZ: Asia/Tokyo
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      SPOTIFY_CLIENT_ID: ${{ secrets.SPOTIFY_CLIENT_ID }}
+      SPOTIFY_USER_ID: ${{ secrets.SPOTIFY_USER_ID }}
+      IHC_PLAYLIST_REFRESH_TOKEN: ${{ secrets.IHC_PLAYLIST_REFRESH_TOKEN }}
+      SPOTIFY_REFRESH_TOKEN_FILE: ${{ runner.temp }}/ihc-playlist-refresh-token.txt
+      YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+      SANITY_PROJECT_ID: ${{ vars.SANITY_PROJECT_ID }}
+      SANITY_DATASET: ${{ vars.SANITY_DATASET }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Validate deterministic selection
+        run: python -m unittest discover -s tests -p 'test_ihc_release*.py' -v
+      - name: Plan or publish playlist
+        env:
+          RUN_MODE: ${{ inputs.mode || 'weekly' }}
+          RUN_CUTOFF: ${{ inputs.cutoff }}
+          RUN_APPLY: ${{ github.event_name == 'schedule' || inputs.apply }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          args=(--mode "$RUN_MODE")
+          if [[ -n "$RUN_CUTOFF" ]]; then args+=(--cutoff "$RUN_CUTOFF"); fi
+          if [[ "$RUN_APPLY" == "true" ]]; then args+=(--apply); fi
+          python scripts/ihc_release_playlist_job.py "${args[@]}"
+      - name: Persist rotated playlist token even after failure
+        if: ${{ always() }}
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -s "$SPOTIFY_REFRESH_TOKEN_FILE" ]]; then
+            gh secret set IHC_PLAYLIST_REFRESH_TOKEN --repo "$GITHUB_REPOSITORY" < "$SPOTIFY_REFRESH_TOKEN_FILE"
+            rm -f "$SPOTIFY_REFRESH_TOKEN_FILE"
+          fi
+      - name: Retain selection plan and publication receipt
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ihc-new-release-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/ihc-new-release/
+          if-no-files-found: ignore
+          retention-days: 90

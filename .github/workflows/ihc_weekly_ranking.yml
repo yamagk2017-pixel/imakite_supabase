@@ -15,8 +15,8 @@ name: IHC Weekly Ranking to Supabase
         options:
           - v1
           - v2
-  schedule:
-    - cron: "0 15 * * 1"  # 00:00 JST Tuesday
+  # Automatic legacy weekly ranking is paused. Keep workflow_dispatch and source
+  # for a possible restart. Previous schedule: "0 15 * * 1" (Tuesday 00:00 JST).
 
 jobs:
   run:
