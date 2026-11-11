@@ -8,7 +8,7 @@ from pathlib import Path
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
 from ihc_release_core import NAME, build_candidates, latest_album, latest_saturday, next_saturday, qualifying_video, select_update, timestamp, weekly_scores
-from ihc_release_playlist_job import bootstrap_plan, publish
+from ihc_release_playlist_job import bootstrap_plan, description_with_cover, publish
 from ihc_release_sources import APIError
 
 def track(i,group=None):
@@ -133,6 +133,29 @@ class Publication(unittest.TestCase):
         self.assertEqual(receipt['tracks'],50);self.assertEqual(self.spotify.put_count,1)
         self.assertEqual(self.db.commits[0]['p_cover']['group_id'],'100')
 
+    def test_owner_description_changes_only_cover_group(self):
+        prefix='「今ライブシーンでキテるアイドルは誰なのか!?」アイドル情報専門サイト「IDOL CROSSING」がセレクトしたアイドル楽曲を毎週更新。毎週土曜0時（日本時間）更新。'
+        self.spotify.details['description']=prefix+'カバー：可憐なアイボリー'
+        publish(self.db,self.spotify,self.run,'lease')
+        self.assertEqual(self.spotify.details['description'],prefix+'カバー：Group 100')
+
+    def test_reads_latest_copy_after_cover_upload(self):
+        self.spotify.details['description']='Earlier copy。カバー：Old'
+        def upload(*args):
+            self.spotify.details['description']='Owner edited copy。カバー：Old'
+        self.spotify.upload_cover=upload
+        publish(self.db,self.spotify,self.run,'lease')
+        self.assertEqual(self.spotify.details['description'],'Owner edited copy。カバー：Group 100')
+
+    def test_description_verification_failure_leaves_run_pending(self):
+        put=self.spotify.put
+        def ignore_description(path,data):
+            put(path,{k:v for k,v in data.items() if k!='description'})
+        self.spotify.put=ignore_description
+        with self.assertRaisesRegex(APIError,'verification failed'):
+            publish(self.db,self.spotify,self.run,'lease')
+        self.assertEqual(self.db.commits,[])
+
     def test_retry_after_spotify_write_does_not_add_twice(self):
         def fail(*args):raise APIError('temporary cover failure')
         self.spotify.upload_cover=fail
@@ -151,5 +174,17 @@ class Publication(unittest.TestCase):
         self.db.state['lock_token']='another-publisher'
         with self.assertRaisesRegex(APIError,'lease'):publish(self.db,self.spotify,self.run,'lease')
         self.assertEqual(self.spotify.put_count,0)
+
+class Description(unittest.TestCase):
+    def test_preserves_other_lines_and_credit_spacing(self):
+        self.assertEqual(description_with_cover('本文\r\nカバー： Old\r\nその他の案内','New'),
+                         '本文\r\nカバー： New\r\nその他の案内')
+
+    def test_missing_credit_keeps_copy_and_appends_credit(self):
+        for description,expected in [('Owner copy','Owner copy\nカバー：New'),
+                                     ('Owner copy\n','Owner copy\nカバー：New'),
+                                     (None,'カバー：New')]:
+            with self.subTest(description=description):
+                self.assertEqual(description_with_cover(description,'New'),expected)
 
 if __name__=='__main__':unittest.main()

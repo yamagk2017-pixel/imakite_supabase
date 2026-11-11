@@ -3,6 +3,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import sys
 import uuid
 from datetime import date, datetime, timedelta
@@ -16,6 +17,16 @@ MARKER = 'IDOL CROSSING 新曲プレイリスト'
 
 def ids(rows):
     return [r['track_id'] for r in rows]
+
+def description_with_cover(description, group_name):
+    """Keep the owner's current copy and replace only the cover credit's value."""
+    description=description or ''
+    updated,count=re.subn(r'(カバー：[ \t]*)[^\r\n]*',
+                          lambda match: match[1]+group_name,description,count=1)
+    if count:
+        return updated
+    separator='' if not description or description.endswith(('\r','\n')) else '\n'
+    return description+separator+'カバー：'+group_name
 
 def bootstrap_plan(seed_path=SEED):
     seed=json.loads(Path(seed_path).read_text())
@@ -82,10 +93,13 @@ def publish(db, spotify, run, lock_token):
         raise APIError('Spotify returned a different track order; frozen run remains pending')
     assert_lease(db,lock_token)
     spotify.upload_cover(pid,encoded)
-    spotify.put('playlists/'+pid,{'name':NAME,'public':True,'description':
-        MARKER+'。毎週土曜0時（日本時間）更新。登録アイドルの新着曲を最大25曲ずつ紹介する50曲のプレイリスト。カバー：'+target[0]['group_name']})
+    # Read again immediately before writing so manual copy edits during collection survive.
+    description=description_with_cover(spotify.get('playlists/'+pid).get('description'),target[0]['group_name'])
+    assert_lease(db,lock_token)
+    spotify.put('playlists/'+pid,{'name':NAME,'public':True,'description':description})
     verified=spotify.get('playlists/'+pid)
-    if verified.get('name')!=NAME or verified.get('public') is not True or spotify.playlist_ids(pid)!=ids(target):
+    if (verified.get('name')!=NAME or verified.get('public') is not True
+            or verified.get('description')!=description or spotify.playlist_ids(pid)!=ids(target)):
         raise APIError('Playlist verification failed; rerun to reconcile the frozen target')
     cover['spotify_image_urls']=[i['url'] for i in verified.get('images',[])]
     db.rpc('finish_release_playlist_run',{'p_run_id':run['id'],'p_lock_token':lock_token,
