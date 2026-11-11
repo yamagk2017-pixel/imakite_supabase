@@ -74,7 +74,9 @@ Workflow Dispatchで`mode=weekly`、`cutoff=YYYY-MM-DD`（土曜日）を指定�
 
 ## 残る運用改善
 
-旧週間集計の休止に伴う依存先の見直しが必要。`musicite_ai`の`src/app/imakite/ranking-list.tsx`は旧`weekly_playlists`の埋め込みを参照し、`src/lib/iam/weekly-targets.ts`の`fetchIhcTop20GroupIds`は最新の`weekly_rankings`上位20組を使っている。現在の実装のままでは旧週間値を参照し続ける。サイトの新プレイリストへの導線・埋め込みと、IAMのIHC由来対象の扱いは別途切り替える。旧アーカイブを消す必要はない。
+IAMの参照先は2026-11-11に[新プレイリストの確定済み土曜履歴へ切替済み](https://github.com/yamagk2017-pixel/ai_eticisum/pull/1)。全50曲のグループUUIDを重複除去し、NANDATTE対象と統合する。月曜03:00 JSTを維持し、対象週の土曜履歴が未確定なら既存対象の変更前に停止する。初回定期利用は11/14土曜更新の完了後、11/16月曜03:00を予定する。12件の検証・型チェック・Lint・本番ビルド、および本番の読取専用プレビューを確認済み。
+
+サイト側の`src/app/imakite/ranking-list.tsx`は旧`weekly_playlists`の埋め込みを参照している。新プレイリストへの導線・埋め込みは引き続き切替対象。旧アーカイブを消す必要はない。
 
 YouTubeは未登録588グループ・URL未解決3グループがあり、これらの活動実績は評価できていない。登録情報を整備すれば候補の取りこぼしを減らせる。共有チャンネルが登録された場合は帰属の判断が必要で、現状は重複加点しない。
 
