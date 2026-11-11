@@ -6,6 +6,8 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 from supabase import Client, create_client
 
+from ihc_score_algorithms import validate_algorithm_version
+
 
 def require_env(name: str) -> str:
     value = os.getenv(name)
@@ -84,6 +86,11 @@ def fetch_group_names(supabase: Client, group_ids: list[str]) -> dict[str, str]:
 def main() -> None:
     supabase = get_supabase_client()
 
+    algorithm_version = validate_algorithm_version(
+        os.getenv("IHC_WEEKLY_ALGORITHM_VERSION"), default="v1"
+    )
+    print("Weekly ranking algorithm:", algorithm_version)
+
     week_end_date = parse_week_end_date()
     week_start_date = week_end_date - timedelta(days=6)
     print(f"Weekly range: {week_start_date} - {week_end_date}")
@@ -97,7 +104,10 @@ def main() -> None:
         response = (
             supabase.schema("ihc")
             .table("daily_rankings")
-            .select("snapshot_date, group_id, score, artist_popularity")
+            .select(
+                "snapshot_date,group_id,score,base_score,conversion_momentum,"
+                "algorithm_version,artist_popularity"
+            )
             .gte("snapshot_date", week_start_date.isoformat())
             .lte("snapshot_date", week_end_date.isoformat())
             .order("snapshot_date")
@@ -122,26 +132,76 @@ def main() -> None:
         f"max_date={df['snapshot_date'].max()}",
     )
 
-    # Aggregate total score per artist (score is already x10)
+    # v1 always aggregates the legacy base score. v2 adds conversion momentum
+    # once at the week end instead of summing the same residual seven times.
     df["score"] = pd.to_numeric(df["score"], errors="coerce").fillna(0)
+    df["base_score"] = pd.to_numeric(df["base_score"], errors="coerce")
+    df["base_score"] = df["base_score"].fillna(df["score"])
+    df["conversion_momentum"] = pd.to_numeric(
+        df["conversion_momentum"], errors="coerce"
+    ).fillna(0)
 
-    totals = df.groupby("group_id", as_index=False)["score"].sum()
-    totals = totals.rename(columns={"score": "total_score"})
+    base_totals = (
+        df.groupby("group_id", as_index=False)["base_score"]
+        .sum()
+        .rename(columns={"base_score": "base_total_score"})
+    )
 
     # Use latest day's artist_popularity within the week
     latest = (
         df.sort_values(by=["snapshot_date"])\
           .groupby("group_id", as_index=False)\
-          .tail(1)[["group_id", "artist_popularity"]]
+          .tail(1)[["group_id", "artist_popularity", "conversion_momentum"]]
     )
 
+    if algorithm_version == "v2":
+        observed_dates = set(df["snapshot_date"].unique())
+        expected_dates = {
+            week_start_date + timedelta(days=offset) for offset in range(7)
+        }
+        missing_dates = sorted(expected_dates - observed_dates)
+        if missing_dates:
+            raise ValueError(
+                "Weekly v2 requires seven complete daily dates; missing: "
+                + ", ".join(day.isoformat() for day in missing_dates)
+            )
+        daily_versions = set(df["algorithm_version"].dropna().astype(str))
+        if daily_versions != {"v2"}:
+            raise ValueError(
+                "Weekly v2 requires all source rows to use daily algorithm v2; "
+                f"found: {sorted(daily_versions)}"
+            )
+
     # Attach name_ja
-    group_ids = totals["group_id"].dropna().unique().tolist()
+    group_ids = base_totals["group_id"].dropna().unique().tolist()
     name_map = fetch_group_names(supabase, group_ids)
 
-    ranking = totals.merge(latest, on="group_id", how="left")
+    ranking = base_totals.merge(latest, on="group_id", how="left")
+    ranking["v2_candidate_total_score"] = (
+        ranking["base_total_score"] + ranking["conversion_momentum"]
+    )
+    ranking["v1_candidate_rank"] = (
+        ranking["base_total_score"].rank(method="first", ascending=False).astype(int)
+    )
+    ranking["v2_candidate_rank"] = (
+        ranking["v2_candidate_total_score"]
+        .rank(method="first", ascending=False)
+        .astype(int)
+    )
+    if algorithm_version == "v2":
+        ranking["total_score"] = ranking["v2_candidate_total_score"]
+    else:
+        ranking["total_score"] = ranking["base_total_score"]
     ranking["artist_name"] = ranking["group_id"].map(name_map)
-    ranking = ranking.sort_values(by="total_score", ascending=False).reset_index(drop=True)
+    if algorithm_version == "v1":
+        # Preserve the legacy stable ordering for tied weekly scores.
+        ranking = ranking.sort_values(
+            by="total_score", ascending=False
+        ).reset_index(drop=True)
+    else:
+        ranking = ranking.sort_values(
+            by=["total_score", "group_id"], ascending=[False, True]
+        ).reset_index(drop=True)
     ranking.insert(0, "rank", ranking.index + 1)
 
     # Previous week ranks
@@ -170,6 +230,14 @@ def main() -> None:
                 "group_id": row["group_id"],
                 "artist_name": row.get("artist_name"),
                 "total_score": to_float(row.get("total_score")),
+                "base_total_score": to_float(row.get("base_total_score")),
+                "conversion_momentum": to_float(row.get("conversion_momentum")),
+                "v2_candidate_total_score": to_float(
+                    row.get("v2_candidate_total_score")
+                ),
+                "v1_candidate_rank": to_int(row.get("v1_candidate_rank")),
+                "v2_candidate_rank": to_int(row.get("v2_candidate_rank")),
+                "algorithm_version": algorithm_version,
                 "artist_popularity": to_int(row.get("artist_popularity")),
             }
         )

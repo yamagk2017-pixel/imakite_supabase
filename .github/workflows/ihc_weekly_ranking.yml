@@ -7,6 +7,14 @@ name: IHC Weekly Ranking to Supabase
         description: 'Week end date (YYYY-MM-DD). Default: yesterday (JST)'
         required: false
         type: string
+      algorithm_version:
+        description: 'Published weekly ranking algorithm version'
+        required: false
+        default: v1
+        type: choice
+        options:
+          - v1
+          - v2
   schedule:
     - cron: "0 15 * * 1"  # 00:00 JST Tuesday
 
@@ -29,4 +37,6 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           WEEK_END_DATE: ${{ inputs.week_end_date }}
           GROUP_NAMES_CHUNK_SIZE: "200"
+          # Keep v1 published while v2 candidate scores/ranks are accumulated.
+          IHC_WEEKLY_ALGORITHM_VERSION: ${{ inputs.algorithm_version || vars.IHC_WEEKLY_ALGORITHM_VERSION || 'v1' }}
         run: python scripts/ihc_weekly_ranking_job.py

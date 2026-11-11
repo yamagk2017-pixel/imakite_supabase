@@ -12,6 +12,14 @@ on:
         required: false
         default: true
         type: boolean
+      algorithm_version:
+        description: 'Daily ranking algorithm version'
+        required: false
+        default: v2
+        type: choice
+        options:
+          - v1
+          - v2
   workflow_run:
     workflows: ["IHC Snapshot to Supabase"]
     types:
@@ -40,4 +48,8 @@ jobs:
           SNAPSHOT_DATE: ${{ inputs.snapshot_date }}
           RESET_DAILY_TOP20: ${{ inputs.reset_daily_top20 }}
           GROUP_NAMES_CHUNK_SIZE: "50"
+          IHC_RANKING_ALGORITHM_VERSION: ${{ inputs.algorithm_version || vars.IHC_RANKING_ALGORITHM_VERSION || 'v2' }}
+          CONVERSION_WINDOW_DAYS: "28"
+          CONVERSION_DECAY_RATE: "0.9"
+          CONVERSION_BONUS_PER_REPEAT: "5"
         run: python scripts/ihc_ranking_job.py

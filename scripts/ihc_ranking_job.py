@@ -10,6 +10,12 @@ import pandas as pd
 import requests
 from supabase import Client, create_client
 
+from ihc_score_algorithms import (
+    calculate_conversion_bonus_awarded,
+    calculate_conversion_momentum,
+    validate_algorithm_version,
+)
+
 
 def require_env(name: str) -> str:
     value = os.getenv(name)
@@ -174,6 +180,144 @@ def get_latest_snapshot_date(supabase: Client) -> str:
     return rows[0]["snapshot_date"]
 
 
+def fetch_conversion_history(
+    supabase: Client, start_date: str, end_date: str
+) -> pd.DataFrame:
+    """Fetch prior daily signals and awarded conversion bonus events."""
+
+    page_size = int(os.getenv("PAGE_SIZE", "1000"))
+    offset = 0
+    rows = []
+    while True:
+        response = (
+            supabase.schema("ihc")
+            .table("daily_rankings")
+            .select(
+                "snapshot_date,group_id,artist_popularity,popularity_delta,"
+                "conversion_bonus_awarded"
+            )
+            .gte("snapshot_date", start_date)
+            .lte("snapshot_date", end_date)
+            .order("snapshot_date")
+            .order("group_id")
+            .range(offset, offset + page_size - 1)
+            .execute()
+        )
+        batch = response.data or []
+        rows.extend(batch)
+        if len(batch) < page_size:
+            break
+        offset += page_size
+
+    history = pd.json_normalize(rows)
+    if history.empty:
+        return pd.DataFrame(
+            columns=[
+                "snapshot_date",
+                "group_id",
+                "artist_popularity",
+                "popularity_delta",
+                "conversion_bonus_awarded",
+            ]
+        )
+    history["snapshot_date"] = pd.to_datetime(history["snapshot_date"]).dt.date
+    history["popularity_delta"] = pd.to_numeric(
+        history["popularity_delta"], errors="coerce"
+    ).fillna(0)
+    history["artist_popularity"] = pd.to_numeric(
+        history["artist_popularity"], errors="coerce"
+    )
+    history["conversion_bonus_awarded"] = pd.to_numeric(
+        history["conversion_bonus_awarded"], errors="coerce"
+    ).fillna(0)
+    return history
+
+
+def apply_score_algorithm(
+    ranking_points: pd.DataFrame,
+    history: pd.DataFrame,
+    snapshot_date: str,
+    algorithm_version: str,
+    *,
+    conversion_window_days: int,
+    conversion_decay_rate: float,
+    conversion_bonus_per_repeat: float,
+) -> pd.DataFrame:
+    """Attach v1/v2 score components and return rows ranked by active score."""
+
+    target_date = datetime.fromisoformat(snapshot_date).date()
+    history_by_group = {
+        group_id: rows for group_id, rows in history.groupby("group_id")
+    }
+
+    awarded_values = []
+    momentum_values = []
+    for _, row in ranking_points.iterrows():
+        group_id = row["group_id"]
+        group_history = history_by_group.get(group_id)
+        if group_history is None:
+            prior_positive_impulses = 0.0
+            events = []
+        else:
+            eligible_history = group_history[
+                group_history["artist_popularity"].notna()
+                & (group_history["artist_popularity"] > 2)
+            ]
+            prior_positive_impulses = eligible_history[
+                "popularity_delta"
+            ].clip(lower=0).sum()
+            events = [
+                (event_row["snapshot_date"], event_row["conversion_bonus_awarded"])
+                for _, event_row in group_history.iterrows()
+                if event_row["conversion_bonus_awarded"] > 0
+            ]
+
+        eligible = bool(row.get("conversion_eligible", True))
+        awarded = 0.0
+        if algorithm_version == "v2" and eligible:
+            awarded = calculate_conversion_bonus_awarded(
+                row.get("popularity_delta"),
+                prior_positive_impulses,
+                bonus_per_repeat=conversion_bonus_per_repeat,
+            )
+        events.append((target_date, awarded))
+        momentum = (
+            calculate_conversion_momentum(
+                events,
+                target_date,
+                decay_rate=conversion_decay_rate,
+                window_days=conversion_window_days,
+            )
+            if algorithm_version == "v2" and eligible
+            else 0.0
+        )
+        awarded_values.append(awarded)
+        momentum_values.append(momentum)
+
+    ranking_points = ranking_points.copy()
+    ranking_points["conversion_bonus_awarded"] = awarded_values
+    ranking_points["conversion_momentum"] = momentum_values
+    ranking_points["algorithm_version"] = algorithm_version
+    if algorithm_version == "v2":
+        ranking_points["score"] = (
+            ranking_points["base_score"] + ranking_points["conversion_momentum"]
+        )
+    else:
+        ranking_points["score"] = ranking_points["base_score"]
+
+    if algorithm_version == "v1":
+        # Preserve the legacy stable ordering for tied scores.
+        ranking_points = ranking_points.sort_values(
+            by="score", ascending=False
+        ).reset_index(drop=True)
+    else:
+        ranking_points = ranking_points.sort_values(
+            by=["score", "base_score", "group_id"], ascending=[False, False, True]
+        ).reset_index(drop=True)
+    ranking_points.insert(0, "rank", ranking_points.index + 1)
+    return ranking_points
+
+
 def fetch_group_names(supabase: Client, group_ids: list[str]) -> dict:
     if not group_ids:
         return {}
@@ -265,6 +409,30 @@ def calculate_change_stats(today_val, yesterday_val):
 def main() -> None:
     supabase = get_supabase_client()
 
+    algorithm_version = validate_algorithm_version(
+        os.getenv("IHC_RANKING_ALGORITHM_VERSION"), default="v1"
+    )
+    conversion_window_days = int(os.getenv("CONVERSION_WINDOW_DAYS", "28"))
+    conversion_decay_rate = float(os.getenv("CONVERSION_DECAY_RATE", "0.9"))
+    conversion_bonus_per_repeat = float(
+        os.getenv("CONVERSION_BONUS_PER_REPEAT", "5")
+    )
+    if conversion_window_days <= 0:
+        raise ValueError("CONVERSION_WINDOW_DAYS must be greater than 0.")
+    if not 0 < conversion_decay_rate <= 1:
+        raise ValueError(
+            "CONVERSION_DECAY_RATE must be greater than 0 and at most 1."
+        )
+    if conversion_bonus_per_repeat < 0:
+        raise ValueError("CONVERSION_BONUS_PER_REPEAT must not be negative.")
+    print(
+        "Ranking algorithm:",
+        algorithm_version,
+        f"conversion_window_days={conversion_window_days}",
+        f"conversion_decay_rate={conversion_decay_rate}",
+        f"conversion_bonus_per_repeat={conversion_bonus_per_repeat}",
+    )
+
     snapshot_date = os.getenv("SNAPSHOT_DATE")
     if not snapshot_date:
         # Use the latest available snapshot so workflow timing delay does not
@@ -349,14 +517,55 @@ def main() -> None:
         "artist_popularity"
     ].isna()
     df_diff.loc[condition_low_popularity, "score"] = 0
+    df_diff["conversion_eligible"] = ~condition_low_popularity
 
-    ranking_raw = df_diff.sort_values(by="score", ascending=False).reset_index()
-    ranking_raw.insert(0, "rank", ranking_raw.index + 1)
+    # Persist all score components in the existing point scale (legacy score x10).
+    ranking_points = df_diff.reset_index()
+    ranking_points["base_score"] = ranking_points["score"] * 10
 
-    ranking_raw = ranking_raw[
+    if algorithm_version == "v2":
+        history_start = (
+            datetime.fromisoformat(snapshot_date)
+            - timedelta(days=conversion_window_days)
+        ).strftime("%Y-%m-%d")
+        conversion_history = fetch_conversion_history(
+            supabase, history_start, prev_date
+        )
+        print(
+            "Fetched conversion history:",
+            f"rows={len(conversion_history)}",
+            f"start={history_start}",
+            f"end={prev_date}",
+        )
+    else:
+        conversion_history = pd.DataFrame(
+            columns=[
+                "snapshot_date",
+                "group_id",
+                "artist_popularity",
+                "popularity_delta",
+                "conversion_bonus_awarded",
+            ]
+        )
+
+    ranking_points = apply_score_algorithm(
+        ranking_points,
+        conversion_history,
+        snapshot_date,
+        algorithm_version,
+        conversion_window_days=conversion_window_days,
+        conversion_decay_rate=conversion_decay_rate,
+        conversion_bonus_per_repeat=conversion_bonus_per_repeat,
+    )
+
+    ranking_points = ranking_points[
         [
             "rank",
             "score",
+            "base_score",
+            "conversion_bonus_awarded",
+            "conversion_momentum",
+            "algorithm_version",
             "name",
             "group_id",
             "spotify_id",
@@ -369,10 +578,6 @@ def main() -> None:
             "track_popularity_sum",
         ]
     ]
-
-    # daily_rankings はポイント表記 (score * 10) を保存する
-    ranking_points = ranking_raw.copy()
-    ranking_points["score"] = ranking_points["score"] * 10
 
     response = (
         supabase.schema("ihc")
@@ -402,6 +607,10 @@ def main() -> None:
             "rank",
             "prev_rank",
             "score",
+            "base_score",
+            "conversion_bonus_awarded",
+            "conversion_momentum",
+            "algorithm_version",
             "score_prev",
             "score_delta",
             "rising_icon",
@@ -427,6 +636,12 @@ def main() -> None:
                 "rank": to_int(row["rank"]),
                 "prev_rank": to_int(row.get("prev_rank")),
                 "score": to_float(row.get("score")),
+                "base_score": to_float(row.get("base_score")),
+                "conversion_bonus_awarded": to_float(
+                    row.get("conversion_bonus_awarded")
+                ),
+                "conversion_momentum": to_float(row.get("conversion_momentum")),
+                "algorithm_version": row.get("algorithm_version"),
                 "score_prev": to_float(row.get("score_prev")),
                 "score_delta": to_float(row.get("score_delta")),
                 "rising_icon": bool(row.get("rising_icon")),
@@ -573,8 +788,9 @@ def main() -> None:
     if df_prev_cumulative.empty:
         df_prev_cumulative = pd.DataFrame(columns=["group_id", "cumulative_score"])
 
-    score_points = ranking_raw.copy()
-    score_points["score_points"] = score_points["score"] * 10
+    # Preserve the legacy cumulative-ranking behavior; v2 only changes daily rank.
+    score_points = ranking_points.copy()
+    score_points["score_points"] = score_points["base_score"]
 
     merged = score_points.merge(df_prev_cumulative, on="group_id", how="left")
     merged["cumulative_score"] = merged["cumulative_score"].fillna(0) + merged[
