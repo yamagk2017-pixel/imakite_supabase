@@ -2,6 +2,12 @@
 
 2026-11-11。ユーザー承認済みのIHC中心・独立加点アルゴリズムを、固定Spotifyプレイリストとして運用する。
 
+## 起動結果（2026-11-11）
+
+**[イマキテアイドル：ジャパン](https://open.spotify.com/playlist/6ACBBRFex0KOvF1V82ppvH)**を公開した。初期50曲・順序は承認済み11/10シミュレーションと完全一致。カバーは先頭の可憐なアイボリーのアーティスト画像。固定IDは`6ACBBRFex0KOvF1V82ppvH`、初回の掲載履歴50件を保存済み。
+
+[本番ドライラン成功](https://github.com/yamagk2017-pixel/imakite_supabase/actions/runs/43003443833)後、[初回公開の全ステップが成功](https://github.com/yamagk2017-pixel/imakite_supabase/actions/runs/43003604216)。`IHC_NEW_RELEASE_PLAYLIST_ENABLED=true`を設定し、次の定期締切は**2026-11-14（土）00:00 JST**。旧週間処理の自動起動は停止済み。
+
 ## 運用設定
 
 - プレイリスト名：**イマキテアイドル：ジャパン**。同じSpotify Playlist IDを継続使用し、公開する。
