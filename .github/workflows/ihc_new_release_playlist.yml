@@ -41,7 +41,7 @@ jobs:
       SPOTIFY_CLIENT_ID: ${{ secrets.SPOTIFY_CLIENT_ID }}
       SPOTIFY_USER_ID: ${{ secrets.SPOTIFY_USER_ID }}
       IHC_PLAYLIST_REFRESH_TOKEN: ${{ secrets.IHC_PLAYLIST_REFRESH_TOKEN }}
-      SPOTIFY_REFRESH_TOKEN_FILE: ${{ runner.temp }}/ihc-playlist-refresh-token.txt
+      SPOTIFY_REFRESH_TOKEN_FILE: .secrets/ihc-playlist-refresh-token.txt
       YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
       SANITY_PROJECT_ID: ${{ vars.SANITY_PROJECT_ID }}
       SANITY_DATASET: ${{ vars.SANITY_DATASET }}

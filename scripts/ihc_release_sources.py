@@ -115,6 +115,7 @@ class Spotify:
         rotated=payload.get('refresh_token')
         if rotated and os.getenv('SPOTIFY_REFRESH_TOKEN_FILE'):
             path=Path(os.environ['SPOTIFY_REFRESH_TOKEN_FILE'])
+            path.parent.mkdir(mode=0o700,parents=True,exist_ok=True)
             fd=os.open(path,os.O_WRONLY|os.O_CREAT|os.O_TRUNC,0o600)
             with os.fdopen(fd,'w') as handle:
                 handle.write(rotated)
