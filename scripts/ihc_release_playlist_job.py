@@ -18,6 +18,49 @@ MARKER = 'IDOL CROSSING 新曲プレイリスト'
 def ids(rows):
     return [r['track_id'] for r in rows]
 
+def automatic_readiness(db, state, pending, requested, now=None):
+    """Check due work without Spotify access or database writes."""
+    if not state['last_cutoff']:
+        raise APIError('Run the approved bootstrap before automatic weekly updates')
+    cutoff=pending[0]['cutoff'] if pending else next_saturday(state['last_cutoff']).isoformat()
+    result={'cutoff':cutoff,'requested':requested,'status':'ready'}
+    if not pending and cutoff>requested:
+        return dict(result,status='current',reason='already_committed',last_cutoff=state['last_cutoff'])
+    if state.get('locked_until') and timestamp(state['locked_until'])>(now or datetime.now(JST)):
+        return dict(result,status='waiting',reason='publisher_lease_active',locked_until=state['locked_until'])
+    # A frozen target is already validated; resume it without selecting again.
+    if pending:
+        return dict(result,reason='resume_prepared_run')
+    start=(date.fromisoformat(cutoff)-timedelta(days=7)).isoformat()
+    end=(date.fromisoformat(cutoff)-timedelta(days=1)).isoformat()
+    params={'select':'snapshot_date,group_id','snapshot_date':'gte.'+start,
+            'and':'(snapshot_date.lte.'+end+')','order':'snapshot_date,group_id'}
+    # Compare group keys as well as dates so a partially written daily batch
+    # cannot be mistaken for a completed date by an hourly check.
+    snapshots=db.rows('ihc','artist_snapshots',params)
+    rankings=db.rows('ihc','daily_rankings',params)
+    expected={(date.fromisoformat(start)+timedelta(days=i)).isoformat() for i in range(7)}
+    snapshot_dates={r['snapshot_date'] for r in snapshots}
+    ranking_dates={r['snapshot_date'] for r in rankings}
+    missing=sorted(expected-(snapshot_dates & ranking_dates))
+    ranked={(r['snapshot_date'],r['group_id']) for r in rankings}
+    incomplete=sorted({r['snapshot_date'] for r in snapshots
+                       if (r['snapshot_date'],r['group_id']) not in ranked}-set(missing))
+    if missing or incomplete:
+        return dict(result,status='waiting',reason='daily_data_incomplete',missing_dates=missing,
+                    incomplete_dates=incomplete)
+    return dict(result,reason='seven_daily_dates_ready')
+
+def record_automatic_check(out, result):
+    result=dict(result,checked_at=datetime.now(JST).isoformat())
+    (out/'automatic-check.json').write_text(json.dumps(result,ensure_ascii=False,indent=2)+'\n')
+    print('Automatic readiness:',json.dumps(result,ensure_ascii=False))
+    if os.getenv('GITHUB_STEP_SUMMARY'):
+        with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as handle:
+            handle.write(f"{NAME}: automatic check `{result['status']}` · cutoff {result['cutoff']} · {result['reason']}\n\n")
+            if result.get('missing_dates') or result.get('incomplete_dates'):
+                handle.write(f"Waiting for daily data: missing dates {result['missing_dates']}; incomplete dates {result['incomplete_dates']}. Retried after daily completion and by the hourly schedule.\n\n")
+
 def description_with_cover(description, group_name):
     """Keep the owner's current copy and replace only the cover credit's value."""
     description=description or ''
@@ -114,8 +157,11 @@ def main():
     parser.add_argument('--mode',choices=['bootstrap','weekly'],default='weekly')
     parser.add_argument('--cutoff',help='Saturday YYYY-MM-DD for weekly; bootstrap is pinned to its approved seed')
     parser.add_argument('--apply',action='store_true',help='Publish to Spotify and commit dedicated DB history')
+    parser.add_argument('--automatic',action='store_true',help='Check due weeks and wait for complete daily data before publishing')
     parser.add_argument('--offline-bootstrap',action='store_true',help='Validate the approved seed without any network access')
     args=parser.parse_args()
+    if args.automatic and args.mode!='weekly':
+        parser.error('--automatic requires --mode weekly')
     out=ROOT/'artifacts/ihc-new-release'
     out.mkdir(parents=True,exist_ok=True)
     seed_cutoff,seed_rows,seed_evidence=bootstrap_plan()
@@ -130,18 +176,27 @@ def main():
     elif args.cutoff and args.cutoff!=seed_cutoff:
         raise ValueError('Bootstrap cutoff must match the user-approved simulation')
     http=HTTP(); db=Database(http); state=db.project(SLUG)
-    spotify=Spotify(http)
+    spotify=None
     lock_token=str(uuid.uuid4())
+    lease_requested=False
     summaries=[]
     try:
         # Resume a prepared update before considering any later cutoff.
         for iteration in range(8):
             state=db.project(SLUG)
             pending=db.rows('ihc','release_playlist_runs',{'select':'*','project_slug':'eq.'+SLUG,'status':'eq.prepared','order':'cutoff'})
+            if args.automatic:
+                readiness=automatic_readiness(db,state,pending,requested)
+                record_automatic_check(out,readiness)
+                if readiness['status']!='ready':
+                    break
             if pending:
                 if not args.apply:
                     print('Pending frozen run requires --apply to reconcile:',pending[0]['cutoff']); return
                 run=pending[0]
+                if spotify is None:
+                    spotify=Spotify(http)
+                lease_requested=True
                 run=db.rpc('prepare_release_playlist_run',{'p_slug':SLUG,'p_cutoff':run['cutoff'],'p_mode':run['mode'],
                     'p_expected_revision':state['revision'],'p_target':run['target_tracks'],'p_added':run['added_tracks'],
                     'p_evidence':run['evidence'],'p_lock_token':lock_token})
@@ -149,6 +204,8 @@ def main():
                 if args.mode=='bootstrap':
                     if state['revision']:
                         print('Bootstrap already committed:',state['spotify_playlist_id']); break
+                    if spotify is None:
+                        spotify=Spotify(http)
                     cutoff,target,added,evidence,mode=seed_cutoff,seed_rows,seed_rows,seed_evidence,'bootstrap'
                 else:
                     if not state['last_cutoff']:
@@ -156,12 +213,17 @@ def main():
                     cutoff=next_saturday(state['last_cutoff']).isoformat()
                     if cutoff>requested:
                         print('Already current through:',state['last_cutoff']); break
+                    if spotify is None:
+                        spotify=Spotify(http)
                     target,added,evidence=weekly_plan(db,spotify,http,state,cutoff)
                     mode='weekly'
                 plan={'cutoff':cutoff,'mode':mode,'target':target,'added':added,'evidence':evidence}
                 (out/(cutoff+'-plan.json')).write_text(json.dumps(plan,ensure_ascii=False,indent=2)+'\n')
                 if not args.apply:
                     print(json.dumps({'dry_run':True,'cutoff':cutoff,'tracks':50,'added':len(added)},ensure_ascii=False)); return
+                if spotify is None:
+                    spotify=Spotify(http)
+                lease_requested=True
                 run=db.rpc('prepare_release_playlist_run',{'p_slug':SLUG,'p_cutoff':cutoff,'p_mode':mode,
                     'p_expected_revision':state['revision'],'p_target':target,'p_added':added,'p_evidence':evidence,'p_lock_token':lock_token})
             if run['status']=='committed':
@@ -179,7 +241,7 @@ def main():
                 for s in summaries:
                     handle.write(f"{NAME}: [{s['tracks']} tracks]({s['url']}) · cutoff {s['cutoff']} · added {s['added']} · cover {s['cover_artist']}\n\n")
     finally:
-        if args.apply:
+        if args.apply and lease_requested:
             db.rpc('unlock_release_playlist',{'p_slug':SLUG,'p_lock_token':lock_token})
 
 if __name__=='__main__':
