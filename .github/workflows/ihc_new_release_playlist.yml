@@ -3,6 +3,11 @@ name: IHC New Release Playlist
 "on":
   schedule:
     - cron: "0 15 * * 5" # Saturday 00:00 Asia/Tokyo; aggregation window Sat-Fri
+    - cron: "17 * * * *" # Retry due weeks hourly, away from the busy hour boundary
+  workflow_run:
+    workflows: ["IHC Ranking to Supabase", "IHC Daily Integrity Check"]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
     inputs:
       mode:
@@ -20,6 +25,11 @@ name: IHC New Release Playlist
         required: true
         default: false
         type: boolean
+      automatic:
+        description: "Use automatic readiness checks (wait for daily data; skip committed weeks)"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -30,7 +40,10 @@ concurrency:
 
 jobs:
   publish:
-    if: ${{ github.event_name == 'workflow_dispatch' || vars.IHC_NEW_RELEASE_PLAYLIST_ENABLED == 'true' }}
+    if: >-
+      ${{ github.event_name == 'workflow_dispatch' ||
+          (vars.IHC_NEW_RELEASE_PLAYLIST_ENABLED == 'true' &&
+           (github.event_name == 'schedule' || github.event.workflow_run.conclusion == 'success')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
@@ -56,13 +69,15 @@ jobs:
         env:
           RUN_MODE: ${{ inputs.mode || 'weekly' }}
           RUN_CUTOFF: ${{ inputs.cutoff }}
-          RUN_APPLY: ${{ github.event_name == 'schedule' || inputs.apply }}
+          RUN_APPLY: ${{ github.event_name != 'workflow_dispatch' || inputs.apply }}
+          RUN_AUTOMATIC: ${{ github.event_name != 'workflow_dispatch' || inputs.automatic }}
         shell: bash
         run: |
           set -euo pipefail
           args=(--mode "$RUN_MODE")
           if [[ -n "$RUN_CUTOFF" ]]; then args+=(--cutoff "$RUN_CUTOFF"); fi
           if [[ "$RUN_APPLY" == "true" ]]; then args+=(--apply); fi
+          if [[ "$RUN_AUTOMATIC" == "true" ]]; then args+=(--automatic); fi
           python scripts/ihc_release_playlist_job.py "${args[@]}"
       - name: Persist rotated playlist token even after failure
         if: ${{ always() }}
