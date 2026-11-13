@@ -114,6 +114,8 @@ class AutomaticJob(unittest.TestCase):
              patch.object(job, 'Spotify') as spotify, \
              patch.object(job, 'weekly_plan', return_value=(['target'], ['added'], {})) as plan, \
              patch.object(job, 'publish', side_effect=committed) as publish, \
+             patch.dict(job.os.environ, {'GITHUB_STEP_SUMMARY': ''}), \
+             patch('builtins.print'), \
              patch.object(sys, 'argv', ['job', '--mode', 'weekly', '--cutoff', requested,
                                         '--automatic', '--apply']):
             clock.now.return_value=datetime(2026,11,21,1,tzinfo=JST)
