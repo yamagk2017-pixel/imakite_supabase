@@ -68,6 +68,8 @@ def assert_lease(db, lock_token):
 
 def publish(db, spotify, run, lock_token):
     target,before=run['target_tracks'],run['before_tracks']
+    if len(target)!=50 or len(set(ids(target)))!=50 or len({r['group_id'] for r in target})!=50:
+        raise ValueError('Publication requires 50 unique tracks and groups')
     # Download the existing artist JPEG without alteration, before changing any tracks.
     encoded,cover=spotify.cover(target[0]['spotify_artist_id'],target[0]['group_id'])
     if run['mode']=='bootstrap':

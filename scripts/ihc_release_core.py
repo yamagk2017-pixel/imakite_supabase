@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 JST = ZoneInfo('Asia/Tokyo')
 SLUG = 'imakite-idol-japan'
 NAME = 'イマキテアイドル：ジャパン'
-ALGORITHM = 'ihc-new-release-v1'
+ALGORITHM = 'ihc-new-release-v2'
 
 def timestamp(raw):
     return datetime.fromisoformat(raw.replace('Z', '+00:00')).astimezone(JST)
@@ -118,7 +118,8 @@ def select_update(previous, candidates, ever_seen):
         added.append(row); ids.add(row['track_id']); groups.add(row['group_id'])
         if len(added)==25:
             break
-    target = (added+previous)[:50]
-    if len(target)!=50 or len({r['track_id'] for r in target})!=50:
-        raise ValueError('Update must retain exactly 50 unique Track IDs')
+    retained = [row for row in previous if row['group_id'] not in groups]
+    target = (added+retained)[:50]
+    if len(target)!=50 or len({r['track_id'] for r in target})!=50 or len({r['group_id'] for r in target})!=50:
+        raise ValueError('Update must retain exactly 50 unique tracks and groups')
     return target,added

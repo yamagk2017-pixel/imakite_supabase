@@ -28,9 +28,24 @@ begin
   exception when others then
     if sqlerrm<>'Previously published Track ID' then raise; end if;
   end;
-  -- Same group, different Track ID is allowed; retained older track stays.
+  -- Keeping the old track alongside a new track from the same group is rejected.
   added:=jsonb_build_array(jsonb_set(seed->0,'{track_id}','"new-test-track"'));
   select added||jsonb_agg(value order by ordinality) into target from jsonb_array_elements(seed) with ordinality where ordinality<50;
+  begin
+    perform ihc.prepare_release_playlist_run(slug,'2026-11-14','weekly',1,target,added,'{}',lease);
+    raise exception 'Expected duplicate group rejection';
+  exception when others then
+    if sqlerrm<>'Target requires 50 unique groups' then raise; end if;
+  end;
+  -- Replacing a group must retain every other track, including the old tail.
+  select added||jsonb_agg(value order by ordinality) into target from jsonb_array_elements(seed) with ordinality where ordinality>1;
+  begin
+    perform ihc.prepare_release_playlist_run(slug,'2026-11-14','weekly',1,
+      jsonb_set(jsonb_set(target,'{1}',target->2),'{2}',target->1),added,'{}',lease);
+    raise exception 'Expected retained order rejection';
+  exception when others then
+    if sqlerrm<>'Target must replace added groups and preserve retained order' then raise; end if;
+  end;
   r:=ihc.prepare_release_playlist_run(slug,'2026-11-14','weekly',1,target,added,'{}',lease);
   begin
     perform ihc.prepare_release_playlist_run(slug,'2026-11-14','weekly',1,target,added,'{}',other);
@@ -52,6 +67,18 @@ begin
   if n<>51 then raise exception 'Weekly history expected 51, got %',n; end if;
   select jsonb_array_length(current_tracks) into n from ihc.release_playlist_projects where release_playlist_projects.slug=(r->>'project_slug');
   if n<>50 then raise exception 'Final playlist must have 50 tracks'; end if;
+  select count(distinct value->>'group_id') into n from ihc.release_playlist_projects p,
+    lateral jsonb_array_elements(p.current_tracks) where p.slug=(r->>'project_slug');
+  if n<>50 then raise exception 'Final playlist must have 50 distinct groups'; end if;
+  if exists(select 1 from ihc.release_playlist_projects p,lateral jsonb_array_elements(p.current_tracks) t
+    where p.slug=(r->>'project_slug') and t->>'track_id'=seed->0->>'track_id') then
+    raise exception 'Replaced group retained its old track';
+  end if;
+  -- With no additions, keep the replacement result exactly as it is.
+  again:=ihc.prepare_release_playlist_run(slug,'2026-11-21','weekly',2,target,'[]','{}',other);
+  perform ihc.finish_release_playlist_run((again->>'id')::uuid,other,'snapshot-3',cover);
+  select count(*) into n from ihc.release_playlist_history where project_slug=slug;
+  if n<>51 then raise exception 'No-addition update changed history'; end if;
   if has_table_privilege('anon','ihc.release_playlist_history','select') or
      has_function_privilege('authenticated','ihc.finish_release_playlist_run(uuid,uuid,text,jsonb)','execute') then
     raise exception 'Publication internals must not be publicly accessible';

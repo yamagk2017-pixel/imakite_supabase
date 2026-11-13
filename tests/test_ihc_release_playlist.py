@@ -35,7 +35,34 @@ class Selection(unittest.TestCase):
     def test_history_and_per_update_group_cap(self):
         target,added=select_update(self.old,[track(70),track(100,1),track(101,1),track(102,2)],self.seen|{'70'})
         self.assertEqual([r['track_id'] for r in added],['100','102'])
-        self.assertIn(track(1),target) # Same group's older retained track is allowed.
+        self.assertEqual(target,[track(100,1),track(102,2)]+[r for r in self.old if r['group_id'] not in {'1','2'}])
+        self.assertNotIn(track(1),target)
+        self.assertNotIn(track(2),target)
+
+    def test_only_replacements_keep_all_other_groups_including_tail(self):
+        new=[track(100+i,i) for i in range(25)]
+        target,added=select_update(self.old,new,self.seen)
+        self.assertEqual(added,new)
+        self.assertEqual(target,new+self.old[25:])
+        self.assertEqual(len({r['group_id'] for r in target}),50)
+
+    def test_mixed_new_groups_and_replacements_preserve_retained_order(self):
+        new=[track(100,49),track(101),track(102,0)]
+        target,added=select_update(self.old,new,self.seen)
+        self.assertEqual(added,new)
+        self.assertEqual(target,new+self.old[1:48])
+
+    def test_later_releases_replace_previous_week_without_republishing_old_track(self):
+        first,added=select_update(self.old,[track(100,1)],self.seen)
+        seen=self.seen|{r['track_id'] for r in added}
+        target,added=select_update(first,[track(1),track(100,1),track(101,1)],seen)
+        self.assertEqual(added,[track(101,1)])
+        self.assertEqual(target,[track(101,1)]+[r for r in self.old if r['group_id']!='1'])
+
+    def test_duplicate_existing_groups_fail_without_filling_from_history(self):
+        previous=self.old[:-1]+[track(100,0)]
+        with self.assertRaisesRegex(ValueError,'50 unique tracks and groups'):
+            select_update(previous,[],self.seen|{'100'})
 
     def test_saturday_boundaries_from_tuesday_seed(self):
         self.assertEqual(next_saturday('2026-11-10'),date(2026,11,14))
@@ -132,6 +159,20 @@ class Publication(unittest.TestCase):
         receipt=publish(self.db,self.spotify,self.run,'lease')
         self.assertEqual(receipt['tracks'],50);self.assertEqual(self.spotify.put_count,1)
         self.assertEqual(self.db.commits[0]['p_cover']['group_id'],'100')
+
+    def test_replacement_publishes_fifty_distinct_groups(self):
+        self.run['target_tracks'],self.run['added_tracks']=select_update(self.before,[track(100,1)],{r['track_id'] for r in self.before})
+        publish(self.db,self.spotify,self.run,'lease')
+        self.assertEqual(self.spotify.current,['100']+[str(i) for i in range(50) if i!=1])
+        self.assertEqual(len(self.db.commits),1)
+
+    def test_frozen_run_with_duplicate_groups_stops_before_spotify_writes(self):
+        self.run['target_tracks']=[track(100,1)]+self.before[:49]
+        with self.assertRaisesRegex(ValueError,'50 unique tracks and groups'):
+            publish(self.db,self.spotify,self.run,'lease')
+        self.assertEqual(self.spotify.put_count,0)
+        self.assertEqual(self.spotify.uploads,[])
+        self.assertEqual(self.db.commits,[])
 
     def test_owner_description_changes_only_cover_group(self):
         prefix='「今ライブシーンでキテるアイドルは誰なのか!?」アイドル情報専門サイト「IDOL CROSSING」がセレクトしたアイドル楽曲を毎週更新。毎週土曜0時（日本時間）更新。'
